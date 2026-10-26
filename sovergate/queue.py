@@ -4,7 +4,9 @@ import threading
 import time
 import logging
 from collections import deque
-from typing import Any, Callable
+from typing import Any, Callable, Union
+
+from .sender import DROP, SENT
 
 logger = logging.getLogger("sovergate.queue")
 
@@ -13,7 +15,7 @@ _RETRY_DELAYS = [1, 2, 4, 8, 16, 30, 60]  # seconds between retries
 
 
 class LogQueue:
-    def __init__(self, send_fn: Callable[[dict[str, Any]], bool]) -> None:
+    def __init__(self, send_fn: Callable[[dict[str, Any]], Union[str, bool]]) -> None:
         self._send = send_fn
         self._queue: deque[dict[str, Any]] = deque(maxlen=_MAX_QUEUE)
         self._lock = threading.Lock()
@@ -50,13 +52,15 @@ class LogQueue:
             with self._lock:
                 payload = self._queue[0]
 
-            success = False
+            done = False
             try:
-                success = self._send(payload)
+                outcome = self._send(payload)
+                # SENT and DROP both finish this record; True is accepted as SENT.
+                done = outcome is True or outcome in (SENT, DROP)
             except Exception as e:
                 logger.debug("sovergate queue send error: %s", e)
 
-            if success:
+            if done:
                 with self._lock:
                     self._queue.popleft()
                 retry_index = 0

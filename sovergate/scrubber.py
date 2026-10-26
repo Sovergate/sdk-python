@@ -35,7 +35,8 @@ _RULES: list[tuple[str, re.Pattern, str]] = [
     # ingest DTO + DB CHECK constraint. See follow-up.
     ("id_number", re.compile(r'\b\d{4}(?:[ -]?\d{4}){2,4}\b'), "CARD_REDACTED"),
     # Phone: require at least 7 digits (not just any digit-like chars)
-    ("phone",     re.compile(r'\b(?:\+?\d[\d\s\-().]{5,14}\d)\b'), "PHONE_REDACTED"),
+    # (?<![\w+]) instead of \b so a leading "+" is part of the match, not left behind
+    ("phone",     re.compile(r'(?<![\w+])\+?\d[\d\s\-().]{5,14}\d\b'), "PHONE_REDACTED"),
     ("dob",       re.compile(r'\b(?:\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}|\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2})\b'), "DOB_REDACTED"),
     ("id_number", re.compile(r'\b[A-Z]{1,3}\d{6,9}\b'), "ID_REDACTED"),
     # Names last — broad heuristic, apply only inside common name patterns

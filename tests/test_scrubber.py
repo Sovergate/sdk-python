@@ -139,3 +139,8 @@ def test_no_key_falls_back_to_positional():
     result = scrub("From alice@x.com to bob@y.com")
     assert "[EMAIL_REDACTED_1]" in result.text
     assert "[EMAIL_REDACTED_2]" in result.text
+
+
+def test_phone_with_country_code_is_fully_scrubbed():
+    result = scrub("Call +49 151 23456789 today")
+    assert result.text == "Call [PHONE_REDACTED_1] today"

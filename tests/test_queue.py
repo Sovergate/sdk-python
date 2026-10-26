@@ -2,6 +2,7 @@ import time
 import threading
 import pytest
 from sovergate.queue import LogQueue
+from sovergate.sender import DROP, SENT
 
 
 def test_queue_calls_send():
@@ -35,6 +36,23 @@ def test_queue_retries_on_failure():
     q.stop()
 
     assert len(attempts) >= 2
+
+
+def test_dropped_record_does_not_block_the_next_one():
+    attempts = []
+
+    def fake_send(payload):
+        attempts.append(payload["n"])
+        return DROP if payload["n"] == 1 else SENT
+
+    q = LogQueue(send_fn=fake_send)
+    q.start()
+    q.enqueue({"n": 1})
+    q.enqueue({"n": 2})
+    time.sleep(0.3)  # well under the 1s retry delay
+    q.stop()
+
+    assert attempts == [1, 2]
 
 
 def test_queue_drops_oldest_when_full():

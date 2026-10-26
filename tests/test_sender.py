@@ -4,7 +4,7 @@ import json
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import pytest
-from sovergate.sender import send
+from sovergate.sender import DROP, RETRY, SENT, send
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -45,7 +45,7 @@ def test_send_posts_to_ingest(tmp_path):
     )
 
     server.shutdown()
-    assert result is True
+    assert result == SENT
     assert len(_Handler.received) == 1
     req = _Handler.received[0]
     assert req["path"] == "/ingest"
@@ -53,7 +53,7 @@ def test_send_posts_to_ingest(tmp_path):
     assert req["body"]["model"] == "gpt-4o"
 
 
-def test_send_returns_false_on_server_error():
+def test_send_retries_on_server_error():
     _Handler.received.clear()
     _Handler.status_to_return = 500
     server = _start_server(19877)
@@ -65,16 +65,35 @@ def test_send_returns_false_on_server_error():
     )
 
     server.shutdown()
-    assert result is False
+    assert result == RETRY
 
 
-def test_send_returns_false_when_server_unreachable():
+def test_send_retries_when_server_unreachable():
     result = send(
         api_key="sov_test_key",
         payload={"model": "gpt-4o"},
         base_url="http://127.0.0.1:19999",  # nothing listening here
     )
-    assert result is False
+    assert result == RETRY
+
+
+@pytest.mark.parametrize("status,expected", [
+    (400, DROP),   # invalid record: retrying can never succeed
+    (401, DROP),   # unknown or revoked key
+    (413, DROP),   # record too large
+    (429, RETRY),  # rate limited: temporary
+    (503, RETRY),  # server unavailable: temporary
+])
+def test_send_classifies_http_errors(status, expected):
+    _Handler.status_to_return = status
+    port = 19880 + status % 100
+    server = _start_server(port)
+
+    result = send(api_key="sov_test_key", payload={}, base_url=f"http://127.0.0.1:{port}")
+
+    server.shutdown()
+    server.server_close()
+    assert result == expected
 
 
 def test_send_never_raises():

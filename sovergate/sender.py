@@ -11,10 +11,17 @@ logger = logging.getLogger("sovergate.sender")
 _BASE_URL = "https://api.sovergate.com"
 _TIMEOUT = 2  # seconds — never exceed this
 
+# Outcomes of one send attempt.
+SENT = "sent"    # accepted by the server
+RETRY = "retry"  # temporary failure: keep the record and try again later
+DROP = "drop"    # permanently rejected: retrying the same record can never succeed
 
-def send(api_key: str, payload: dict[str, Any], base_url: str = _BASE_URL) -> bool:
+_RETRYABLE_STATUS = {408, 425, 429}
+
+
+def send(api_key: str, payload: dict[str, Any], base_url: str = _BASE_URL) -> str:
     """
-    POST payload to /ingest. Returns True on success, False on any failure.
+    POST payload to /ingest and return SENT, RETRY or DROP.
     Never raises — the caller's app must not be affected by our failures.
     """
     try:
@@ -29,10 +36,15 @@ def send(api_key: str, payload: dict[str, Any], base_url: str = _BASE_URL) -> bo
             },
         )
         with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
-            return resp.status < 400
+            return SENT if resp.status < 400 else RETRY
     except urllib.error.HTTPError as e:
-        logger.debug("sovergate ingest HTTP %s: %s", e.code, e.reason)
-        return False
+        if e.code in _RETRYABLE_STATUS or e.code >= 500:
+            logger.debug("sovergate ingest HTTP %s, will retry: %s", e.code, e.reason)
+            return RETRY
+        # 400 (invalid record), 401/403 (bad or revoked key), 413 (too large)...
+        # Retrying would block every later record behind this one.
+        logger.warning("sovergate: ingest rejected a record (HTTP %s %s); dropping it", e.code, e.reason)
+        return DROP
     except Exception as e:
-        logger.debug("sovergate ingest error: %s", e)
-        return False
+        logger.debug("sovergate ingest error, will retry: %s", e)
+        return RETRY
