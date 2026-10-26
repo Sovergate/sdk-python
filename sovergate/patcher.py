@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
-from .scrubber import scrub, scrub_messages
+from .scrubber import ScrubContext, scrub, scrub_messages
 
 logger = logging.getLogger("sovergate.patcher")
 
@@ -80,11 +80,16 @@ def patch_openai(openai_module: Any, enqueue: Enqueue, pii_key: Optional[bytes] 
     """Wraps chat.completions.create on the openai module or an OpenAI / AsyncOpenAI client."""
 
     def build(kwargs: dict, response: Any, request_at: str, latency_ms: int) -> dict:
-        scrubbed_messages, detections = scrub_messages(kwargs.get("messages", []), pii_key)
+        context = ScrubContext()
+        scrubbed_messages, detections = scrub_messages(kwargs.get("messages", []), pii_key, context)
 
         choice = response.choices[0] if response.choices else None
         response_text = choice.message.content if choice else ""
-        scrubbed_response = scrub(response_text, pii_key).text if response_text else ""
+        scrubbed_response = ""
+        if response_text:
+            result = scrub(response_text, pii_key, context)
+            scrubbed_response = result.text
+            detections = detections + result.detections
 
         usage = response.usage
         return {
@@ -115,12 +120,17 @@ def patch_anthropic(anthropic_client: Any, enqueue: Enqueue, pii_key: Optional[b
             all_messages.append({"role": "system", "content": system})
         all_messages.extend(kwargs.get("messages", []))
 
-        scrubbed_messages, detections = scrub_messages(all_messages, pii_key)
+        context = ScrubContext()
+        scrubbed_messages, detections = scrub_messages(all_messages, pii_key, context)
 
         response_text = "".join(
             block.text for block in (response.content or []) if getattr(block, "type", None) == "text"
         )
-        scrubbed_response = scrub(response_text, pii_key).text if response_text else ""
+        scrubbed_response = ""
+        if response_text:
+            result = scrub(response_text, pii_key, context)
+            scrubbed_response = result.text
+            detections = detections + result.detections
 
         usage = response.usage
         return {

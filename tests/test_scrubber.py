@@ -144,3 +144,18 @@ def test_no_key_falls_back_to_positional():
 def test_phone_with_country_code_is_fully_scrubbed():
     result = scrub("Call +49 151 23456789 today")
     assert result.text == "Call [PHONE_REDACTED_1] today"
+
+
+def test_placeholders_are_numbered_across_a_whole_record():
+    from sovergate.scrubber import ScrubContext, scrub_messages
+    ctx = ScrubContext()
+    messages, _ = scrub_messages(
+        [{"role": "user", "content": "Mail anna@example.com"},
+         {"role": "user", "content": "and ben@example.com, cc anna@example.com"}],
+        context=ctx,
+    )
+    response = scrub("Sent to ben@example.com", context=ctx)
+
+    assert messages[0]["content"] == "Mail [EMAIL_REDACTED_1]"
+    assert messages[1]["content"] == "and [EMAIL_REDACTED_2], cc [EMAIL_REDACTED_1]"
+    assert response.text == "Sent to [EMAIL_REDACTED_2]"

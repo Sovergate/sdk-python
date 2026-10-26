@@ -44,6 +44,25 @@ _RULES: list[tuple[str, re.Pattern, str]] = [
 ]
 
 
+class ScrubContext:
+    """
+    Numbers positional placeholders across one whole record (all messages and the
+    response), so the same value always gets the same placeholder and two
+    different values never share one. Only used when no HMAC key is set.
+    """
+
+    def __init__(self) -> None:
+        self._seen: dict[tuple[str, str], int] = {}
+        self._next: dict[str, int] = {}
+
+    def placeholder(self, base: str, value: str) -> str:
+        key = (base, _normalize(value))
+        if key not in self._seen:
+            self._next[base] = self._next.get(base, 0) + 1
+            self._seen[key] = self._next[base]
+        return f"[{base}_{self._seen[key]}]"
+
+
 @dataclass
 class Detection:
     category: str
@@ -56,28 +75,28 @@ class ScrubResult:
     detections: list[Detection]
 
 
-def scrub(text: str, key: Optional[bytes] = None) -> ScrubResult:
+def scrub(text: str, key: Optional[bytes] = None, context: Optional[ScrubContext] = None) -> ScrubResult:
     """Replace PII in text with placeholders. Returns scrubbed text + detection list.
 
     If ``key`` is given, each value is replaced with a deterministic, irreversible
     HMAC token — the same value yields the same token across every log, which lets
     the platform count unique entities without ever holding the raw PII. The key
     is the customer's secret and is never sent to our servers. Without a key, we
-    fall back to per-text positional numbering (tokens are not correlatable).
+    fall back to positional numbering, shared across a record via ``context``
+    (tokens are not correlatable between records).
     """
     if not text:
         return ScrubResult(text=text, detections=[])
 
     detections: list[Detection] = []
-    counters: dict[str, int] = {}
+    context = context or ScrubContext()
 
     for category, pattern, base_placeholder in _RULES:
         def replace(m: re.Match, cat: str = category, ph: str = base_placeholder) -> str:
             if key is not None:
                 placeholder = _hmac_token(key, ph, m.group(0))
             else:
-                counters[cat] = counters.get(cat, 0) + 1
-                placeholder = f"[{ph}_{counters[cat]}]"
+                placeholder = context.placeholder(ph, m.group(0))
             detections.append(Detection(category=cat, placeholder=placeholder))
             return placeholder
 
@@ -87,16 +106,17 @@ def scrub(text: str, key: Optional[bytes] = None) -> ScrubResult:
 
 
 def scrub_messages(
-    messages: list[dict], key: Optional[bytes] = None
+    messages: list[dict], key: Optional[bytes] = None, context: Optional[ScrubContext] = None
 ) -> tuple[list[dict], list[Detection]]:
     """Scrub a list of OpenAI-style message dicts. Returns scrubbed messages + all detections."""
     all_detections: list[Detection] = []
     scrubbed: list[dict] = []
+    context = context or ScrubContext()
 
     for msg in messages:
         content = msg.get("content", "")
         if isinstance(content, str):
-            result = scrub(content, key)
+            result = scrub(content, key, context)
             scrubbed.append({**msg, "content": result.text})
             all_detections.extend(result.detections)
         elif isinstance(content, list):
@@ -104,7 +124,7 @@ def scrub_messages(
             new_blocks = []
             for block in content:
                 if block.get("type") == "text":
-                    result = scrub(block.get("text", ""), key)
+                    result = scrub(block.get("text", ""), key, context)
                     new_blocks.append({**block, "text": result.text})
                     all_detections.extend(result.detections)
                 else:

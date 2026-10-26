@@ -67,6 +67,8 @@ def assert_scrubbed(payload):
     assert "@example.com" not in json.dumps(payload)
     assert payload["prompt_tokens"] == 12
     assert payload["completion_tokens"] == 5
+    # john@ in the prompt and jane@ in the response: both detected, distinct placeholders
+    assert [d["placeholder"] for d in payload["pii_detections"]] == ["[EMAIL_REDACTED_1]", "[EMAIL_REDACTED_2]"]
 
 
 # --- OpenAI ---------------------------------------------------------------
