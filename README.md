@@ -67,6 +67,23 @@ sovergate.init(api_key="sov_prod_xxxx")
 sovergate.instrument(client)
 ```
 
+### Streaming
+
+Streamed calls are logged too: `create(stream=True)` on both providers, plus
+OpenAI's `chat.completions.stream()` and Anthropic's `messages.stream()`. Your
+app receives every chunk unchanged and as soon as it arrives; the SDK keeps a
+copy of the text and logs it once the stream ends. If your app stops reading
+part-way, what it had received up to that point is logged.
+
+OpenAI only reports token counts for a stream when you ask for them:
+
+```python
+client.chat.completions.create(..., stream=True, stream_options={"include_usage": True})
+```
+
+Without that option the record is still logged, with 0 tokens. The SDK never
+adds the option itself, because it changes the chunks your app receives.
+
 ## Stable PII tokens (recommended)
 
 By default, detected PII is replaced with positional placeholders
@@ -124,7 +141,8 @@ The code is in [`sovergate/scrubber.py`](sovergate/scrubber.py).
 - Never blocks your call: logging runs in a background daemon thread
 - Never raises: if setup fails, the SDK logs a warning on the `sovergate`
   logger and stays out of the way
-- Returns the provider's response unchanged; `with_raw_response` keeps working
+- Returns the provider's response unchanged, and passes stream chunks through
+  unchanged as they arrive; `with_raw_response` keeps working
 - Never changes your app's logging configuration, even with `debug=True`
 - 2 second timeout on every HTTP call to Sovergate
 - If Sovergate is unreachable, records are queued in memory (up to 10,000) and
@@ -134,7 +152,7 @@ The code is in [`sovergate/scrubber.py`](sovergate/scrubber.py).
 
 ## Current limitations
 
-- Streaming calls (`stream=True`) are passed through untouched but not logged yet.
+- Only the text of a response is logged, streamed or not; tool calls are not.
 - Calls made through `with_raw_response` are not logged.
 - The retry queue is in memory, so queued records are lost if the process exits.
 
